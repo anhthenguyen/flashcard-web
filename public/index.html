@@ -261,9 +261,10 @@
     function replayKanji() {
       const drawing = strokeCanvas.querySelector('.kanji-drawing');
       if (!drawing) return;
-      drawing.classList.remove('is-animating');
-      void drawing.offsetWidth;
-      drawing.classList.add('is-animating');
+      const replay = drawing.cloneNode(true);
+      replay.classList.remove('is-animating');
+      strokeCanvas.replaceChildren(replay);
+      requestAnimationFrame(() => replay.classList.add('is-animating'));
     }
 
     function drawKanji(svgText, character) {
