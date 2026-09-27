@@ -225,6 +225,7 @@
     const strokeStatus = document.getElementById('strokeStatus');
     const strokeCanvas = document.getElementById('strokeCanvas');
     const kanjiSvgCache = new Map();
+    const strokePalette = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#be123c', '#4f46e5'];
     let currentKanji = [];
     let selectedKanji = null;
     let strokesKey = null;
@@ -269,10 +270,15 @@
       const sourceDocument = new DOMParser().parseFromString(svgText, 'image/svg+xml');
       const source = sourceDocument.documentElement;
       const strokes = [...sourceDocument.querySelectorAll('path[d]')].map((path) => path.getAttribute('d')).filter(Boolean);
+      const numberPositions = [...sourceDocument.querySelectorAll('g[id*="StrokeNumbers"] text')].map((number) => {
+        const match = (number.getAttribute('transform') || '').match(/matrix\([^)]*\s(-?[\d.]+)\s(-?[\d.]+)\)/);
+        return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+      });
       if (source.nodeName.toLowerCase() !== 'svg' || !strokes.length) throw new Error(`Không đọc được nét chữ cho ${character}.`);
       const namespace = 'http://www.w3.org/2000/svg';
       const svg = document.createElementNS(namespace, 'svg');
       svg.setAttribute('viewBox', source.getAttribute('viewBox') || '0 0 109 109');
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
       svg.setAttribute('role', 'img');
       svg.setAttribute('aria-label', `Thứ tự nét chữ ${character}`);
       svg.classList.add('kanji-drawing');
@@ -281,11 +287,28 @@
         stroke.setAttribute('d', d);
         stroke.classList.add('kanji-stroke');
         stroke.style.setProperty('--stroke-index', index);
+        stroke.style.setProperty('--stroke-color', strokePalette[index % strokePalette.length]);
         svg.appendChild(stroke);
       });
       strokeCanvas.replaceChildren(svg);
       svg.querySelectorAll('.kanji-stroke').forEach((stroke) => {
-        stroke.style.setProperty('--stroke-length', Math.max(1, stroke.getTotalLength()));
+        const length = Math.max(1, stroke.getTotalLength());
+        stroke.style.setProperty('--stroke-length', length);
+        const point = numberPositions[[...svg.querySelectorAll('.kanji-stroke')].indexOf(stroke)] || stroke.getPointAtLength(Math.min(length * 0.08, 8));
+        const label = document.createElementNS(namespace, 'g');
+        label.classList.add('kanji-stroke-number');
+        label.style.setProperty('--stroke-index', stroke.style.getPropertyValue('--stroke-index'));
+        label.style.setProperty('--stroke-color', stroke.style.getPropertyValue('--stroke-color'));
+        const circle = document.createElementNS(namespace, 'circle');
+        circle.setAttribute('cx', point.x);
+        circle.setAttribute('cy', point.y);
+        circle.setAttribute('r', '5.6');
+        const number = document.createElementNS(namespace, 'text');
+        number.setAttribute('x', point.x);
+        number.setAttribute('y', point.y);
+        number.textContent = String([...svg.querySelectorAll('.kanji-stroke')].indexOf(stroke) + 1);
+        label.append(circle, number);
+        svg.appendChild(label);
       });
       requestAnimationFrame(() => svg.classList.add('is-animating'));
       strokeStatus.textContent = `${character} · ${strokes.length} nét`;
@@ -1558,6 +1581,3 @@
 </body>
 
 </html>
-
-
-
