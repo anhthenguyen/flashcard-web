@@ -239,14 +239,13 @@ body.zoom-mode #detailsLabel, body.zoom-mode .markdown-details, body.zoom-mode #
 .kanji-choice.selected { background: #dbe5ff; border-color: #7286d8; color: #1f2d5c; }
 .kanji-stroke-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .stroke-status { color: #596273; font-size: 14px; }
-.stroke-canvas { width: min(100%, 340px); aspect-ratio: 1 / 1; margin: 14px auto 0; padding: 12px; border: 1px solid #e5e8ef; border-radius: 8px; background: repeating-linear-gradient(0deg, transparent, transparent calc(50% - 1px), #edf0f6 calc(50% - 1px), #edf0f6 50%, transparent 50%), repeating-linear-gradient(90deg, transparent, transparent calc(50% - 1px), #edf0f6 calc(50% - 1px), #edf0f6 50%, transparent 50%); }
-.kanji-drawing { display: block; width: 100%; height: 100%; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.kanji-stroke { stroke: var(--stroke-color); stroke-dasharray: var(--stroke-length); stroke-dashoffset: var(--stroke-length); }
+.stroke-canvas { width: min(100%, 260px); aspect-ratio: 1 / 1; margin: 14px auto 0; padding: 12px; border: 1px solid #e5e8ef; border-radius: 8px; background: repeating-linear-gradient(0deg, transparent, transparent calc(50% - 1px), #edf0f6 calc(50% - 1px), #edf0f6 50%, transparent 50%), repeating-linear-gradient(90deg, transparent, transparent calc(50% - 1px), #edf0f6 calc(50% - 1px), #edf0f6 50%, transparent 50%); }
+.kanji-drawing { display: block; width: 100%; height: 100%; fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.kanji-stroke { stroke-dasharray: var(--stroke-length); stroke-dashoffset: var(--stroke-length); }
 .kanji-drawing.is-animating .kanji-stroke { animation: draw-kanji-stroke 0.48s ease-out forwards; animation-delay: calc(var(--stroke-index) * 0.42s); }
 .kanji-stroke-number { opacity: 0; }
 .kanji-drawing.is-animating .kanji-stroke-number { animation: show-kanji-number 0.01s linear forwards; animation-delay: calc(var(--stroke-index) * 0.42s + 0.38s); }
-.kanji-stroke-number circle { fill: #fff; stroke: var(--stroke-color); stroke-width: 1.1; }
-.kanji-stroke-number text { fill: var(--stroke-color); stroke: none; font: 700 6px "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; }
+.kanji-stroke-number text { stroke: none; font: 700 4.2px "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; paint-order: stroke; }
 .kanji-source { margin: 14px 0 0; color: #596273; font-size: 12px; text-align: center; }
 @keyframes draw-kanji-stroke { to { stroke-dashoffset: 0; } }
 @keyframes show-kanji-number { to { opacity: 1; } }

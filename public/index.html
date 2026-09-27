@@ -283,31 +283,29 @@
       svg.setAttribute('aria-label', `Thứ tự nét chữ ${character}`);
       svg.classList.add('kanji-drawing');
       strokes.forEach((d, index) => {
+        const color = strokePalette[index % strokePalette.length];
         const stroke = document.createElementNS(namespace, 'path');
         stroke.setAttribute('d', d);
+        stroke.setAttribute('stroke', color);
         stroke.classList.add('kanji-stroke');
         stroke.style.setProperty('--stroke-index', index);
-        stroke.style.setProperty('--stroke-color', strokePalette[index % strokePalette.length]);
         svg.appendChild(stroke);
       });
       strokeCanvas.replaceChildren(svg);
       svg.querySelectorAll('.kanji-stroke').forEach((stroke) => {
+        const color = stroke.getAttribute('stroke') || '#1f2937';
         const length = Math.max(1, stroke.getTotalLength());
         stroke.style.setProperty('--stroke-length', length);
         const point = numberPositions[[...svg.querySelectorAll('.kanji-stroke')].indexOf(stroke)] || stroke.getPointAtLength(Math.min(length * 0.08, 8));
         const label = document.createElementNS(namespace, 'g');
         label.classList.add('kanji-stroke-number');
         label.style.setProperty('--stroke-index', stroke.style.getPropertyValue('--stroke-index'));
-        label.style.setProperty('--stroke-color', stroke.style.getPropertyValue('--stroke-color'));
-        const circle = document.createElementNS(namespace, 'circle');
-        circle.setAttribute('cx', point.x);
-        circle.setAttribute('cy', point.y);
-        circle.setAttribute('r', '5.6');
         const number = document.createElementNS(namespace, 'text');
         number.setAttribute('x', point.x);
         number.setAttribute('y', point.y);
+        number.setAttribute('fill', color);
         number.textContent = String([...svg.querySelectorAll('.kanji-stroke')].indexOf(stroke) + 1);
-        label.append(circle, number);
+        label.append(number);
         svg.appendChild(label);
       });
       requestAnimationFrame(() => svg.classList.add('is-animating'));
@@ -784,8 +782,6 @@
       return card.word || '';
 
     }
-
-
 
     function speakCurrentWord() {
 
