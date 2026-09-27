@@ -73,12 +73,15 @@
 
         </span>
 
+        <button id="previousCard" type="button">Quay lại</button>
+
         <button id="nextCard" type="button">Ti?p</button>
 
         <button id="speakWord" type="button">Doc</button>
 
         <button id="zoomToggle">Phong to</button>
         <label class="inline" id="detailsLabel" hidden><input type="checkbox" id="detailsToggle" aria-controls="markdownDetails" /> Chi tiết</label>
+        <label class="inline" id="strokesLabel" hidden><input type="checkbox" id="strokesToggle" aria-controls="kanjiStrokes" /> Nét chữ</label>
 
       </div>
 
@@ -98,6 +101,12 @@
 
     </section>
     <section id="markdownDetails" class="markdown-details" aria-label="Chi tiết" hidden></section>
+    <section id="kanjiStrokes" class="kanji-strokes" aria-label="Nét chữ Kanji" hidden>
+      <div id="kanjiChoices" class="kanji-choices" aria-label="Chọn Kanji"></div>
+      <div class="kanji-stroke-actions"><button id="replayStrokes" type="button">Phát lại</button><span id="strokeStatus" class="stroke-status" aria-live="polite"></span></div>
+      <div id="strokeCanvas" class="stroke-canvas"></div>
+      <p class="kanji-source">Dữ liệu nét chữ: <a href="https://kanjivg.tagaini.net/" target="_blank" rel="noopener noreferrer">KanjiVG</a></p>
+    </section>
 
   </div>
 
@@ -208,6 +217,134 @@
       }
     }
 
+    const strokesLabel = document.getElementById('strokesLabel');
+    const strokesToggle = document.getElementById('strokesToggle');
+    const kanjiStrokes = document.getElementById('kanjiStrokes');
+    const kanjiChoices = document.getElementById('kanjiChoices');
+    const replayStrokes = document.getElementById('replayStrokes');
+    const strokeStatus = document.getElementById('strokeStatus');
+    const strokeCanvas = document.getElementById('strokeCanvas');
+    const kanjiSvgCache = new Map();
+    let currentKanji = [];
+    let selectedKanji = null;
+    let strokesKey = null;
+    let strokesRequest = 0;
+
+    function kanjiIn(text) {
+      return [...new Set([...String(text || '')].filter((character) => /\p{Script=Han}/u.test(character)))];
+    }
+
+    function resetStrokes() {
+      ++strokesRequest;
+      currentKanji = [];
+      selectedKanji = null;
+      strokesLabel.hidden = true;
+      kanjiStrokes.hidden = true;
+      kanjiChoices.replaceChildren();
+      strokeCanvas.replaceChildren();
+      strokeStatus.textContent = '';
+    }
+
+    async function loadKanjiSvg(character) {
+      if (kanjiSvgCache.has(character)) return kanjiSvgCache.get(character);
+      const url = `https://raw.githubusercontent.com/KanjiVG/kanjivg/master/kanji/${character.codePointAt(0).toString(16).padStart(5, '0')}.svg`;
+      const promise = fetch(url, { cache: 'force-cache', credentials: 'omit' }).then(async (response) => {
+        if (!response.ok) throw new Error(`Không tìm thấy nét chữ cho ${character}.`);
+        return response.text();
+      });
+      kanjiSvgCache.set(character, promise);
+      try { return await promise; }
+      catch (error) { kanjiSvgCache.delete(character); throw error; }
+    }
+
+    function replayKanji() {
+      const drawing = strokeCanvas.querySelector('.kanji-drawing');
+      if (!drawing) return;
+      drawing.classList.remove('is-animating');
+      void drawing.offsetWidth;
+      drawing.classList.add('is-animating');
+    }
+
+    function drawKanji(svgText, character) {
+      const sourceDocument = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+      const source = sourceDocument.documentElement;
+      const strokes = [...sourceDocument.querySelectorAll('path[d]')].map((path) => path.getAttribute('d')).filter(Boolean);
+      if (source.nodeName.toLowerCase() !== 'svg' || !strokes.length) throw new Error(`Không đọc được nét chữ cho ${character}.`);
+      const namespace = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(namespace, 'svg');
+      svg.setAttribute('viewBox', source.getAttribute('viewBox') || '0 0 109 109');
+      svg.setAttribute('role', 'img');
+      svg.setAttribute('aria-label', `Thứ tự nét chữ ${character}`);
+      svg.classList.add('kanji-drawing');
+      strokes.forEach((d, index) => {
+        const stroke = document.createElementNS(namespace, 'path');
+        stroke.setAttribute('d', d);
+        stroke.classList.add('kanji-stroke');
+        stroke.style.setProperty('--stroke-index', index);
+        svg.appendChild(stroke);
+      });
+      strokeCanvas.replaceChildren(svg);
+      svg.querySelectorAll('.kanji-stroke').forEach((stroke) => {
+        stroke.style.setProperty('--stroke-length', Math.max(1, stroke.getTotalLength()));
+      });
+      requestAnimationFrame(() => svg.classList.add('is-animating'));
+      strokeStatus.textContent = `${character} · ${strokes.length} nét`;
+    }
+
+    async function selectKanji(character) {
+      if (!currentKanji.includes(character) || !strokesToggle.checked) return;
+      selectedKanji = character;
+      kanjiChoices.querySelectorAll('button').forEach((button) => button.classList.toggle('selected', button.dataset.kanji === character));
+      strokeCanvas.replaceChildren();
+      strokeStatus.textContent = `Đang tải ${character}…`;
+      const request = ++strokesRequest;
+      try {
+        const svgText = await loadKanjiSvg(character);
+        if (request === strokesRequest) drawKanji(svgText, character);
+      } catch (error) {
+        if (request === strokesRequest) strokeStatus.textContent = error.message || 'Không tải được nét chữ.';
+      }
+    }
+
+    function showKanjiStrokes() {
+      if (!currentKanji.length || !strokesToggle.checked || strokesLabel.hidden) return;
+      kanjiStrokes.hidden = false;
+      if (!selectedKanji || !currentKanji.includes(selectedKanji)) selectedKanji = currentKanji[0];
+      if (!kanjiChoices.childElementCount) {
+        currentKanji.forEach((character) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'kanji-choice';
+          button.dataset.kanji = character;
+          button.textContent = character;
+          button.setAttribute('aria-label', `Xem nét chữ ${character}`);
+          button.addEventListener('click', () => selectKanji(character));
+          kanjiChoices.appendChild(button);
+        });
+      }
+      selectKanji(selectedKanji);
+    }
+
+    function updateKanjiStrokes(card) {
+      const normalMode = !document.body.classList.contains('zoom-mode');
+      const key = card && normalMode ? JSON.stringify([state.currentFile, card.word]) : null;
+      if (key === strokesKey) return;
+      strokesKey = key;
+      resetStrokes();
+      if (!key) return;
+      currentKanji = kanjiIn(card.word);
+      if (!currentKanji.length) return;
+      selectedKanji = currentKanji[0];
+      strokesLabel.hidden = false;
+      if (strokesToggle.checked) showKanjiStrokes();
+    }
+
+    strokesToggle.addEventListener('change', () => {
+      if (strokesToggle.checked) showKanjiStrokes();
+      else kanjiStrokes.hidden = true;
+    });
+    replayStrokes.addEventListener('click', replayKanji);
+
     const fileSelect = document.getElementById('fileSelect');
 
     const randomToggle = document.getElementById('randomToggle');
@@ -229,6 +366,8 @@
     const speakBtn = document.getElementById('speakWord');
 
     const nextBtn = document.getElementById('nextCard');
+
+    const previousBtn = document.getElementById('previousCard');
 
     const badgeExample = document.getElementById('badgeExample');
 
@@ -388,6 +527,8 @@
       saveBtn.textContent = texts.saveButton || 'L?u t? ch?a thu?c';
 
       nextBtn.textContent = texts.nextButton || 'Ti?p';
+
+      previousBtn.textContent = texts.previousButton || 'Quay lại';
 
       speakBtn.textContent = texts.speakButton || 'Doc';
 
@@ -680,6 +821,7 @@
 
       const card = currentCard();
       updateDetails(card);
+      updateKanjiStrokes(card);
 
       const autoMean =
 
@@ -790,6 +932,24 @@
       clearAutoTimer();
 
       state.index = (state.index + delta + state.indices.length) % state.indices.length;
+
+      state.showMode = 'word';
+
+      render();
+
+      persistState();
+
+      startAutoTimer();
+
+    }
+
+    function moveToPrevious() {
+
+      if (!state.cards.length) return;
+
+      clearAutoTimer();
+
+      state.index = (state.index - 1 + state.indices.length) % state.indices.length;
 
       state.showMode = 'word';
 
@@ -1134,6 +1294,27 @@
 
 
 
+      let touchStart = null;
+      let ignoreCardClickUntil = 0;
+
+      cardBox.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'touch' || e.isPrimary === false || e.target.closest('button, select, label, input')) return;
+        touchStart = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      });
+
+      cardBox.addEventListener('pointerup', (e) => {
+        if (!touchStart || e.pointerId !== touchStart.id) return;
+        const deltaX = e.clientX - touchStart.x;
+        const deltaY = e.clientY - touchStart.y;
+        touchStart = null;
+        if (Math.abs(deltaX) < 56 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return;
+        ignoreCardClickUntil = Date.now() + 500;
+        if (deltaX < 0) moveToNext(1);
+        else moveToPrevious();
+      });
+
+      cardBox.addEventListener('pointercancel', () => { touchStart = null; });
+
       cardBox.addEventListener('click', (e) => {
 
         const isControl =
@@ -1146,7 +1327,7 @@
 
           e.target.closest('label');
 
-        if (isControl) return;
+        if (isControl || Date.now() < ignoreCardClickUntil) return;
 
         copyCurrentWord();
 
@@ -1156,6 +1337,7 @@
 
         document.body.classList.toggle('zoom-mode');
         updateDetails(currentCard());
+        updateKanjiStrokes(currentCard());
 
         zoomToggle.textContent = document.body.classList.contains('zoom-mode')
 
@@ -1184,6 +1366,8 @@
         }
 
       });
+
+      previousBtn.addEventListener('click', moveToPrevious);
 
       speakBtn.addEventListener('click', speakCurrentWord);
 
@@ -1226,7 +1410,7 @@
 
 
 
-        if (e.key === 'ArrowLeft') moveToNext(-1);
+        if (e.key === 'ArrowLeft') moveToPrevious();
 
         if (e.key === 'ArrowRight') moveToNext(1);
 
@@ -1319,6 +1503,8 @@
       detailsLabel.hidden = true;
       markdownDetails.hidden = true;
       markdownDetails.replaceChildren();
+      strokesKey = null;
+      resetStrokes();
       state.cards = [];
       state.indices = [];
       state.currentFile = '';
@@ -1372,11 +1558,6 @@
 </body>
 
 </html>
-
-
-
-
-
 
 
 
