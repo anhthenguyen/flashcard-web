@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Flashcard tu YAML</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="title">Flashcard tu YAML</div>
+      <div class="controls">
+        <label>File:
+          <select id="fileSelect"></select>
+        </label>
+        <label class="inline"><input type="checkbox" id="randomToggle" /> Ngau nhien</label>
+        <span id="saveSlot" class="save-slot">
+          <button id="saveUnknown">Luu tu chua thuoc</button>
+          <span id="unknownCount" class="unknown-count"></span>
+        </span>
+        <button id="zoomToggle">Phong to</button>
+      </div>
+    </header>
+
+    <section class="card" id="cardBox">
+      <div class="card-label" aria-hidden="true">&nbsp;</div>
+      <div id="word" class="word">Dang tai...</div>
+      <div id="detail" class="detail muted">Chua co du lieu</div>
+      <div id="counter" class="counter"></div>
+      <div class="badge-row">
+        <span id="badgeExample" class="badge" aria-label="Has example">E</span>
+        <span id="badgeSpell" class="badge" aria-label="Has spell">S</span>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <script>
+    const state = {
+      cards: [],
+      indices: [],
+      index: 0,
+      showMode: 'word',
+      currentFile: '',
+      unknownFile: '',
+      unknownCount: 0,
+      random: false,
+    };
+
+    let texts = {};
+
+    const wordEl = document.getElementById('word');
+    const detailEl = document.getElementById('detail');
+    const counterEl = document.getElementById('counter');
+    const fileSelect = document.getElementById('fileSelect');
+    const randomToggle = document.getElementById('randomToggle');
+    const saveBtn = document.getElementById('saveUnknown');
+    const unknownCountEl = document.getElementById('unknownCount');
+    const saveSlot = document.getElementById('saveSlot');
+    const zoomToggle = document.getElementById('zoomToggle');
+    const toastEl = document.getElementById('toast');\n    const badgeExample = document.getElementById('badgeExample');\n    const badgeSpell = document.getElementById('badgeSpell');
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, options);
+      if (!res.ok) throw new Error('Request failed');
+      return res.json();
+    }
+
+    function showToast(message) {
+      toastEl.textContent = message;
+      toastEl.classList.add('show');
+      setTimeout(() => toastEl.classList.remove('show'), 1800);
+    }
+
+    function shuffle(array) {
+      const arr = array.slice();
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    function buildIndices() {
+      const base = state.cards.map((_, idx) => idx);
+      state.indices = state.random ? shuffle(base) : base;
+      state.index = 0;
+    }
+
+    function currentCard() {
+      if (!state.cards.length) return null;
+      const realIndex = state.indices[state.index] ?? 0;
+      return state.cards[realIndex];
+    }
+
+    function setIndexFromSaved(savedState = {}) {
+      if (!savedState || !savedState.word) return;
+      const idx = state.cards.findIndex(
+        (c) => c.word === savedState.word && c.mean === savedState.mean
+      );
+      if (idx >= 0) {
+        const pos = state.indices.findIndex((i) => i === idx);
+        state.index = pos >= 0 ? pos : 0;
+      }
+    }
+
+    function applyTexts() {
+      document.title = texts.title || 'Flashcard tu YAML';
+      const titleEl = document.querySelector('.title');
+      if (titleEl) titleEl.textContent = texts.title || 'Flashcard tu YAML';
+      const randomLabel = texts.randomLabel || 'Ngau nhien';
+      const labelInline = randomToggle.parentElement;
+      if (labelInline) {
+        labelInline.childNodes[1].textContent = ' ' + randomLabel;
+      }
+      saveBtn.textContent = texts.saveButton || 'Luu tu chua thuoc';
+      zoomToggle.textContent = document.body.classList.contains('zoom-mode')
+        ? (texts.zoomOff || 'Thu nho')
+        : (texts.zoomOn || 'Phong to');
+      wordEl.textContent = texts.loadingWord || 'Dang tai...';
+      detailEl.textContent = texts.noData || 'Chua co du lieu';
+      updateUnknownCountDisplay();
+    }
+
+    function updateUnknownCountDisplay() {
+      const viewingUnknown = state.currentFile === state.unknownFile;
+      unknownCountEl.textContent = `${texts.unknownCountLabel || 'Chua thuoc'}: ${state.unknownCount}`;
+      const showSave = !viewingUnknown;
+      saveSlot.style.visibility = showSave ? 'visible' : 'hidden';
+      saveBtn.style.visibility = showSave ? 'visible' : 'hidden';
+      unknownCountEl.style.visibility = showSave ? 'visible' : 'hidden';
+    }
+
+    function render() {
+      const card = currentCard();
+      if (!card) {\n        wordEl.textContent = texts.noData || 'Khong co du lieu';\n        detailEl.textContent = texts.noDataDetail || 'Chon file hoac them du lieu vao YAML';\n        detailEl.classList.add('muted');\n        counterEl.textContent = '';\n        badgeExample.style.visibility = 'hidden';\n        badgeSpell.style.visibility = 'hidden';
+        return;
+      }
+
+      wordEl.textContent = card.word;
+      counterEl.textContent = `${state.index + 1} / ${state.cards.length}`;
+      let detailText = '';
+      let detailClass = 'detail';
+
+      if (state.showMode === 'mean') {
+        detailText = `${card.spell ? card.spell + ' / ' : ''}${card.mean}`;
+      } else if (state.showMode === 'example') {
+        detailText = card.example || texts.exampleFallback || 'Khong co vi du';
+      } else {
+        detailText = '';
+        detailClass += ' muted';
+      }
+
+      detailEl.textContent = detailText;
+      detailEl.className = detailClass;\n\n      badgeExample.style.visibility = card.example ? 'visible' : 'hidden';\n      badgeSpell.style.visibility = card.spell ? 'visible' : 'hidden';\n    }
+
+    async function persistState() {
+      const card = currentCard();
+      await fetchJson('/api/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file: state.currentFile,
+          word: card?.word,
+          mean: card?.mean,
+        }),
+      }).catch(() => {});
+    }
+
+    function next(delta) {
+      if (!state.cards.length) return;
+      state.index = (state.index + delta + state.indices.length) % state.indices.length;
+      state.showMode = 'word';
+      render();
+      persistState();
+    }
+
+    async function loadFiles() {
+      texts = await fetchJson('/api/texts').catch(() => ({}));
+      applyTexts();
+
+      const filesData = await fetchJson('/api/files');
+      fileSelect.innerHTML = '';
+      filesData.files.forEach((f) => {
+        const option = document.createElement('option');
+        option.value = f;
+        option.textContent = f;
+        fileSelect.appendChild(option);
+      });
+      state.unknownFile = filesData.unknownFile;
+      state.unknownCount = filesData.unknownCount || 0;
+
+      const saved = await fetchJson('/api/state').catch(() => ({}));
+      let desiredFile = null;
+      if (saved.file && filesData.files.includes(saved.file)) {
+        desiredFile = saved.file;
+      } else if (filesData.defaultFile && filesData.files.includes(filesData.defaultFile)) {
+        desiredFile = filesData.defaultFile;
+      } else if (filesData.files.length) {
+        desiredFile = filesData.files[0];
+      }
+
+      if (desiredFile) fileSelect.value = desiredFile;
+
+      if (desiredFile) {
+        await loadFile(desiredFile, saved);
+      } else {
+        state.cards = [];
+        state.currentFile = '';
+        render();
+      }
+      updateUnknownCountDisplay();
+    }
+
+    async function loadFile(name, savedState = {}) {
+      if (!name) return;
+      const data = await fetchJson(`/api/cards?file=${encodeURIComponent(name)}`);
+      state.cards = data.cards;
+      state.currentFile = data.file;
+      buildIndices();
+      setIndexFromSaved(savedState);
+      render();
+      updateUnknownCountDisplay();
+      persistState();
+    }
+
+    async function saveUnknownCard() {
+      const card = currentCard();
+      if (!card) return;
+      const data = await fetchJson('/api/save-unknown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card, sourceFile: state.currentFile, targetFile: state.unknownFile }),
+      });
+      if (data.duplicate) {
+        showToast(texts.saveDuplicate || 'Tu da ton tai trong danh sach chua thuoc');
+        return;
+      }
+      state.unknownCount = data.count ?? state.unknownCount + 1;
+      updateUnknownCountDisplay();
+      showToast(texts.saveSuccess || 'Da them vao chua thuoc');
+      await persistState();
+    }
+
+    async function removeUnknownCard() {
+      const card = currentCard();
+      if (!card) return;
+      const data = await fetchJson('/api/remove-unknown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card }),
+      });
+      state.unknownCount = data.count ?? Math.max(0, state.unknownCount - 1);
+
+      const realIndex = state.indices[state.index];
+      if (typeof realIndex === 'number') {
+        state.cards.splice(realIndex, 1);
+        state.indices = state.indices
+          .filter((i) => i !== realIndex)
+          .map((i) => (i > realIndex ? i - 1 : i));
+        if (state.indices.length === 0) {
+          render();
+          updateUnknownCountDisplay();
+          showToast(texts.removeSuccess || 'Da xoa khoi chua thuoc');
+          await persistState();
+          return;
+        }
+        if (state.index >= state.indices.length) {
+          state.index = state.indices.length - 1;
+        }
+      }
+
+      render();
+      updateUnknownCountDisplay();
+      showToast(texts.removeSuccess || 'Da xoa khoi chua thuoc');
+      await persistState();
+    }
+
+    function bindInputs() {
+      fileSelect.addEventListener('change', (e) => loadFile(e.target.value));
+      randomToggle.addEventListener('change', (e) => {
+        state.random = e.target.checked;
+        buildIndices();
+        render();
+        persistState();
+      });
+      saveBtn.addEventListener('click', () => {
+        if (state.currentFile === state.unknownFile) return;
+        saveUnknownCard().catch(() => showToast(texts.loadFailed || 'Luu that bai'));
+      });
+
+      zoomToggle.addEventListener('click', () => {
+        document.body.classList.toggle('zoom-mode');
+        zoomToggle.textContent = document.body.classList.contains('zoom-mode')
+          ? (texts.zoomOff || 'Thu nho')
+          : (texts.zoomOn || 'Phong to');
+      });
+
+      window.addEventListener('keydown', (e) => {
+        const isForm = ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName);
+        if (!isForm && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', ' ', 'r', 'R', 'f', 'F'].includes(e.key)) {
+          e.preventDefault();
+        }
+        if (isForm) return;
+
+        if (e.key === 'ArrowLeft') next(-1);
+        if (e.key === 'ArrowRight') next(1);
+        if (e.key === 'ArrowUp') {
+          state.showMode = 'mean';
+          render();
+        }
+        if (e.key === 'ArrowDown') {
+          state.showMode = 'example';
+          render();
+        }
+        if (e.key === ' ' || e.key === 'Spacebar') {
+          zoomToggle.click();
+        }
+        if (e.key === 'r' || e.key === 'R') {
+          randomToggle.checked = !randomToggle.checked;
+          state.random = randomToggle.checked;
+          buildIndices();
+          render();
+          persistState();
+        }
+        if (e.key === 'f' || e.key === 'F') {
+          fileSelect.focus();
+        }
+        if (e.key === 'Enter') {
+          if (state.currentFile === state.unknownFile) {
+            removeUnknownCard().catch(() => showToast(texts.loadFailed || 'Xoa that bai'));
+          } else {
+            saveUnknownCard().catch(() => showToast(texts.loadFailed || 'Luu that bai'));
+          }
+        }
+      });
+    }
+
+    (async function init() {
+      bindInputs();
+      await loadFiles();
+    })();
+  </script>
+</body>
+</html>
+
+
+

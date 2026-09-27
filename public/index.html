@@ -1,0 +1,1382 @@
+<!doctype html>
+
+<html lang="vi">
+
+<head>
+
+  <meta charset="UTF-8" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <title>Flashcard t? YAML</title>
+
+  <link rel="stylesheet" href="./style.css" />
+
+</head>
+
+<body>
+
+  <div class="app">
+
+    <details id="connectionPanel" class="connection-panel" open>
+      <summary>Cấu hình repository</summary>
+      <form id="connectionForm" class="connection-form">
+        <label>Nguồn dữ liệu
+          <select id="repoProvider"><option value="github">GitHub</option><option value="gitlab">GitLab</option></select>
+        </label>
+        <label>Repository / Project ID
+          <input id="repoProject" required placeholder="owner/repository" autocomplete="off" />
+        </label>
+        <label>Branch <input id="repoBranch" required value="main" autocomplete="off" /></label>
+        <label>Thư mục gốc (nếu có) <input id="repoRoot" placeholder="Để trống nếu data/ nằm ở gốc" autocomplete="off" /></label>
+        <label>API URL (nếu dùng máy chủ riêng)
+          <input id="repoApiUrl" type="url" placeholder="Để trống cho github.com / gitlab.com" autocomplete="off" />
+        </label>
+        <label>Token <input id="repoToken" type="password" autocomplete="off" spellcheck="false" aria-describedby="tokenHelp" /></label>
+        <p id="tokenHelp" class="connection-help">Repository công khai có thể đọc không cần token. Để lưu: GitHub cần Contents: Read and write; GitLab cần scope api. Token chỉ được gửi tới API đã chọn.</p>
+        <label class="connection-check"><input id="rememberToken" type="checkbox" /> Nhớ token trong tab này (sessionStorage)</label>
+        <label class="connection-check"><input id="syncState" type="checkbox" /> Đồng bộ vị trí học lên repository (tạo commit khi chuyển thẻ)</label>
+        <div class="connection-actions">
+          <button id="connectRepository" type="submit">Kết nối / Tải lại</button>
+          <button id="disconnectRepository" type="button">Ngắt kết nối và xóa token</button>
+        </div>
+      </form>
+    </details>
+    <p id="connectionStatus" class="connection-status" role="status">Chọn repository để bắt đầu học.</p>
+    <p id="apiError" class="api-error" role="alert" hidden></p>
+
+    <header class="topbar">
+
+      <div class="title">Flashcard t? YAML</div>
+
+      <div class="controls" inert>
+
+        <label>File:
+
+          <select id="fileSelect"></select>
+
+        </label>
+
+        <label class="inline"><input type="checkbox" id="randomToggle" /> Ng?u nhien</label>
+
+        <label class="inline"><input type="checkbox" id="autoToggle" /> T? d?ng</label>
+
+        <label class="inline auto-delay"><input type="number" id="autoDelay" min="1" max="3600" step="1" value="10" /> giay</label>
+
+        <span id="autoCountdown" class="auto-countdown" aria-live="polite"></span>
+
+        <span id="saveSlot" class="save-slot">
+
+          <button id="saveUnknown">L?u t? ch?a thu?c</button>
+
+          <span id="unknownCount" class="unknown-count"></span>
+
+        </span>
+
+        <button id="nextCard" type="button">Ti?p</button>
+
+        <button id="speakWord" type="button">Doc</button>
+
+        <button id="zoomToggle">Phong to</button>
+        <label class="inline" id="detailsLabel" hidden><input type="checkbox" id="detailsToggle" aria-controls="markdownDetails" /> Chi tiết</label>
+
+      </div>
+
+    </header>
+
+
+
+    <section class="card" id="cardBox">
+
+      <div class="card-label" aria-hidden="true"><span id="badgeExample" class="badge" aria-label="Co vi d?">E</span><span id="badgeSpell" class="badge" aria-label="Co cach ??c">S</span></div>
+
+      <div id="word" class="word">?ang t?i...</div>
+
+      <div id="detail" class="detail muted">Ch?a co d? li?u</div>
+
+      <div id="counter" class="counter"></div>
+
+    </section>
+    <section id="markdownDetails" class="markdown-details" aria-label="Chi tiết" hidden></section>
+
+  </div>
+
+
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+
+
+  <script src="./vendor/marked.min.js"></script>
+  <script src="./vendor/purify.min.js"></script>
+  <script src="./repository-store.js"></script>
+  <script src="./card-format.js"></script>
+  <script src="./browser-api.js"></script>
+  <script src="./connection-settings.js"></script>
+  <script>
+
+    const state = {
+
+      cards: [],
+
+      indices: [],
+
+      index: 0,
+
+      showMode: 'word',
+
+      currentFile: '',
+
+      unknownFile: '',
+
+      unknownCount: 0,
+
+      random: false,
+
+      autoEnabled: false,
+
+      autoDelaySeconds: 10,
+
+      autoDeadline: 0,
+
+      autoTimer: null,
+
+      autoTicker: null,
+
+      autoToken: 0,
+
+      autoSaving: false,
+
+      voices: [],
+
+    };
+
+
+
+    let texts = {};
+
+    let savedPositions = {};
+
+    let repositoryClient = null;
+    let connectionGeneration = 0;
+    let fileRequest = 0;
+    let appReady = false;
+    const localMode = new URLSearchParams(location.search).get('mode') === 'local';
+    const apiError = document.getElementById('apiError');
+    const controls = document.querySelector('.controls');
+    function canWriteRepository() { return localMode || Boolean(repositoryClient?.canWrite); }
+
+
+
+    const wordEl = document.getElementById('word');
+
+    const detailEl = document.getElementById('detail');
+
+    const counterEl = document.getElementById('counter');
+
+    const cardBox = document.getElementById('cardBox');
+    const detailsLabel = document.getElementById('detailsLabel');
+    const detailsToggle = document.getElementById('detailsToggle');
+    const markdownDetails = document.getElementById('markdownDetails');
+    let detailsKey = null;
+    let detailsRequest = 0;
+
+    detailsToggle.addEventListener('change', () => {
+      markdownDetails.hidden = !detailsToggle.checked || detailsLabel.hidden;
+    });
+
+    async function updateDetails(card) {
+      const normalMode = !document.body.classList.contains('zoom-mode');
+      const key = card && normalMode ? JSON.stringify([state.currentFile, card.word]) : null;
+      if (key === detailsKey) return;
+      detailsKey = key;
+      const request = ++detailsRequest;
+      detailsLabel.hidden = true;
+      markdownDetails.hidden = true;
+      markdownDetails.replaceChildren();
+      if (!key) return;
+      try {
+        const params = new URLSearchParams({ file: state.currentFile, word: card.word });
+        const data = await fetchJson('/api/details?' + params);
+        if (request !== detailsRequest || !data.available) return;
+        markdownDetails.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
+        detailsLabel.hidden = false;
+        markdownDetails.hidden = !detailsToggle.checked;
+      } catch (error) {
+        if (request === detailsRequest) detailsKey = null;
+        console.error('Failed to load details:', error);
+      }
+    }
+
+    const fileSelect = document.getElementById('fileSelect');
+
+    const randomToggle = document.getElementById('randomToggle');
+
+    const autoToggle = document.getElementById('autoToggle');
+
+    const autoDelay = document.getElementById('autoDelay');
+
+    const autoCountdown = document.getElementById('autoCountdown');
+
+    const saveBtn = document.getElementById('saveUnknown');
+
+    const unknownCountEl = document.getElementById('unknownCount');
+
+    const saveSlot = document.getElementById('saveSlot');
+
+    const zoomToggle = document.getElementById('zoomToggle');
+
+    const speakBtn = document.getElementById('speakWord');
+
+    const nextBtn = document.getElementById('nextCard');
+
+    const badgeExample = document.getElementById('badgeExample');
+
+    const badgeSpell = document.getElementById('badgeSpell');
+
+    const toastEl = document.getElementById('toast');
+
+
+
+    function ensureFileOption(name) {
+
+      if (!name) return;
+
+      const exists = Array.from(fileSelect.options).some((opt) => opt.value === name);
+
+      if (!exists) {
+
+        const option = document.createElement('option');
+
+        option.value = name;
+
+        option.textContent = name;
+
+        fileSelect.appendChild(option);
+
+      }
+
+    }
+
+    async function fetchJson(url, options) {
+      const generation = connectionGeneration;
+      try {
+        let data;
+        if (localMode) {
+          const res = await fetch(url, options);
+          data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Không tải được dữ liệu.');
+        } else {
+          if (!repositoryClient) throw new Error('Chưa kết nối repository.');
+          data = await repositoryClient.request(url, options);
+        }
+        if (generation !== connectionGeneration) throw new Error('Kết nối đã thay đổi.');
+        return data;
+      } catch (error) {
+        if (generation === connectionGeneration) {
+          apiError.textContent = RepositorySettings.errorMessage(error);
+          apiError.hidden = false;
+        }
+        throw error;
+      }
+    }
+
+
+
+    function showToast(message) {
+
+      toastEl.textContent = message;
+
+      toastEl.classList.add('show');
+
+      setTimeout(() => toastEl.classList.remove('show'), 1800);
+
+    }
+
+
+
+    function shuffle(array) {
+
+      const arr = array.slice();
+
+      for (let i = arr.length - 1; i > 0; i--) {
+
+        const j = Math.floor(Math.random() * (i + 1));
+
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+
+      }
+
+      return arr;
+
+    }
+
+
+
+    function buildIndices() {
+
+      const base = state.cards.map((_, idx) => idx);
+
+      state.indices = state.random ? shuffle(base) : base;
+
+      state.index = 0;
+
+    }
+
+
+
+    function currentCard() {
+
+      if (!state.cards.length) return null;
+
+      const realIndex = state.indices[state.index] ?? 0;
+
+      return state.cards[realIndex];
+
+    }
+
+
+
+    function setIndexFromSaved(savedState = {}) {
+
+      if (!savedState || !savedState.word) return;
+
+      const idx = state.cards.findIndex(
+
+        (c) => c.word === savedState.word && c.mean === savedState.mean
+
+      );
+
+      if (idx >= 0) {
+
+        const pos = state.indices.findIndex((i) => i === idx);
+
+        state.index = pos >= 0 ? pos : 0;
+
+      }
+
+    }
+
+
+
+    function applyTexts() {
+
+      document.title = texts.title || 'Flashcard t? YAML';
+
+      const titleEl = document.querySelector('.title');
+
+      if (titleEl) titleEl.textContent = texts.title || 'Flashcard t? YAML';
+
+      const randomLabel = texts.randomLabel || 'Ng?u nhien';
+
+      const labelInline = randomToggle.parentElement;
+
+      if (labelInline && labelInline.childNodes[1]) {
+
+        labelInline.childNodes[1].textContent = ' ' + randomLabel;
+
+      }
+
+      const autoLabelEl = autoToggle.parentElement;
+
+      if (autoLabelEl && autoLabelEl.childNodes[1]) autoLabelEl.childNodes[1].textContent = ' ' + (texts.autoLabel || 'T? d?ng');
+
+      const delayLabelEl = autoDelay.parentElement;
+
+      if (delayLabelEl && delayLabelEl.childNodes[1]) delayLabelEl.childNodes[1].textContent = ' ' + (texts.secondsLabel || 'giay');
+
+      saveBtn.textContent = texts.saveButton || 'L?u t? ch?a thu?c';
+
+      nextBtn.textContent = texts.nextButton || 'Ti?p';
+
+      speakBtn.textContent = texts.speakButton || 'Doc';
+
+      speakBtn.title = texts.speakTitle || 'Doc tu hien tai';
+
+      zoomToggle.textContent = document.body.classList.contains('zoom-mode')
+
+        ? (texts.zoomOff || 'Thu nh?')
+
+        : (texts.zoomOn || 'Phong to');
+
+      wordEl.textContent = texts.loadingWord || '?ang t?i...';
+
+      detailEl.textContent = texts.noData || 'Ch?a co d? li?u';
+
+      updateUnknownCountDisplay();
+
+    }
+
+
+
+    function updateUnknownCountDisplay() {
+
+      const viewingUnknown = state.currentFile === state.unknownFile;
+
+      saveBtn.disabled = !appReady || !canWriteRepository();
+      autoToggle.disabled = !appReady || !canWriteRepository();
+      nextBtn.textContent = viewingUnknown && canWriteRepository()
+
+        ? (texts.rememberedButton || 'Da nh?')
+
+        : (texts.nextButton || 'Ti?p');
+
+      unknownCountEl.textContent = `${texts.unknownCountLabel || 'Ch?a thu?c'}: ${state.unknownCount}`;
+
+      const showSave = !viewingUnknown;
+
+      saveSlot.style.visibility = showSave ? 'visible' : 'hidden';
+
+      saveBtn.style.visibility = showSave ? 'visible' : 'hidden';
+
+      unknownCountEl.style.visibility = showSave ? 'visible' : 'hidden';
+
+    }
+
+
+
+    function loadAutoPreferences() {
+
+      try {
+
+        state.autoEnabled = localStorage.getItem('flashcard.autoEnabled') === 'true';
+
+        const savedDelay = Number(localStorage.getItem('flashcard.autoDelaySeconds'));
+
+        if (Number.isInteger(savedDelay) && savedDelay >= 1 && savedDelay <= 3600) state.autoDelaySeconds = savedDelay;
+
+      } catch (_) {}
+
+      autoToggle.checked = state.autoEnabled;
+
+      autoDelay.value = state.autoDelaySeconds;
+
+    }
+
+    function saveAutoPreferences() {
+
+      try {
+
+        localStorage.setItem('flashcard.autoEnabled', String(state.autoEnabled));
+
+        localStorage.setItem('flashcard.autoDelaySeconds', String(state.autoDelaySeconds));
+
+      } catch (_) {}
+
+    }
+
+    function clearAutoTimer() {
+
+      state.autoToken += 1;
+
+      if (state.autoTimer) clearTimeout(state.autoTimer);
+
+      if (state.autoTicker) clearInterval(state.autoTicker);
+
+      state.autoTimer = null;
+
+      state.autoTicker = null;
+
+      state.autoDeadline = 0;
+
+      autoCountdown.textContent = '';
+
+    }
+
+    function updateAutoCountdown(token) {
+
+      if (token !== state.autoToken || !state.autoDeadline) return;
+
+      const remaining = Math.max(0, Math.ceil((state.autoDeadline - Date.now()) / 1000));
+
+      autoCountdown.textContent = `${texts.autoCountdownLabel || 'T? d?ng'}: ${remaining}s`;
+
+    }
+
+    function startAutoTimer() {
+
+      clearAutoTimer();
+
+      if (!appReady || !canWriteRepository() || !state.autoEnabled || !currentCard() || state.autoSaving) return;
+
+      const token = state.autoToken;
+
+      state.autoDeadline = Date.now() + state.autoDelaySeconds * 1000;
+
+      updateAutoCountdown(token);
+
+      state.autoTicker = setInterval(() => updateAutoCountdown(token), 250);
+
+      state.autoTimer = setTimeout(() => handleAutoTimeout(token), state.autoDelaySeconds * 1000);
+
+    }
+
+    async function handleAutoTimeout(token) {
+
+      if (token !== state.autoToken || !state.autoEnabled || state.autoSaving || !currentCard()) return;
+
+      if (state.autoTimer) clearTimeout(state.autoTimer);
+
+      if (state.autoTicker) clearInterval(state.autoTicker);
+
+      state.autoTimer = null;
+
+      state.autoTicker = null;
+
+      state.autoSaving = true;
+
+      autoCountdown.textContent = texts.autoSaving || 'Dang luu...';
+
+      try {
+
+        if (state.currentFile !== state.unknownFile) {
+
+          await saveUnknownCard(true);
+
+          if (token !== state.autoToken) return;
+
+          showToast(texts.autoSaved || 'Da tu dong luu vao chua thuoc');
+
+        }
+
+        if (token !== state.autoToken) return;
+
+        state.autoSaving = false;
+
+        moveToNext(1);
+
+      } catch (err) {
+
+        if (token === state.autoToken) {
+
+          state.autoEnabled = false;
+
+          autoToggle.checked = false;
+
+          saveAutoPreferences();
+
+          autoCountdown.textContent = texts.autoSaveFailed || 'Tu dong luu that bai';
+
+          showToast(texts.autoSaveFailed || 'Tu dong luu that bai');
+
+        }
+
+      } finally {
+
+        state.autoSaving = false;
+
+        if (token !== state.autoToken && state.autoEnabled && !state.autoTimer) startAutoTimer();
+
+      }
+
+    }
+
+    function loadVoices() {
+
+      if (!('speechSynthesis' in window)) return;
+
+      state.voices = window.speechSynthesis.getVoices();
+
+    }
+
+
+
+    function detectSpeechLang(text) {
+
+      if (/[\u3040-\u30ff\u3400-\u9fff]/.test(text)) return 'ja-JP';
+
+      if (/[a-z]/i.test(text)) return 'en-US';
+
+      return 'vi-VN';
+
+    }
+
+
+
+    function findVoice(lang) {
+
+      const voices = state.voices || [];
+
+      return (
+
+        voices.find((voice) => voice.lang === lang) ||
+
+        voices.find((voice) => voice.lang && voice.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())) ||
+
+        null
+
+      );
+
+    }
+
+
+
+    function getSpeechText(card, lang) {
+
+      if (!card) return '';
+
+      if (lang === 'ja-JP' && card.spell) return card.spell;
+
+      return card.word || '';
+
+    }
+
+
+
+    function speakCurrentWord() {
+
+      const card = currentCard();
+
+      if (!card || !card.word) return;
+
+      if (!('speechSynthesis' in window)) {
+
+        showToast(texts.speakUnsupported || 'Trinh duyet khong ho tro doc tu');
+
+        return;
+
+      }
+
+      const autoMean =
+        card &&
+        !state.currentFile.endsWith('_unknown.yaml') &&
+        !card.example &&
+        !card.spell &&
+        !card.created &&
+        card.mean;
+      const mode = autoMean ? 'mean' : state.showMode;
+
+      loadVoices();
+
+      const lang = detectSpeechLang(card.word);
+
+      const baseText = getSpeechText(card, lang);
+      const exampleText = mode === 'example' && card.example ? card.example : '';
+      const text = exampleText ? `${baseText}. ${exampleText}` : baseText;
+
+      if (!text) return;
+
+      const utterance = new SpeechSynthesisUtterance(text);
+
+      utterance.lang = lang;
+
+      utterance.rate = lang === 'ja-JP' ? 0.88 : 0.95;
+
+      utterance.pitch = 1;
+
+      const voice = findVoice(lang);
+
+      if (voice) utterance.voice = voice;
+
+      window.speechSynthesis.cancel();
+
+      window.speechSynthesis.speak(utterance);
+
+    }
+
+
+
+        function render() {
+
+      const card = currentCard();
+      updateDetails(card);
+
+      const autoMean =
+
+        card &&
+
+        !state.currentFile.endsWith('_unknown.yaml') &&
+
+        !card.example &&
+
+        !card.spell &&
+
+        !card.created &&
+
+        card.mean;
+
+      if (!card) {
+
+        wordEl.textContent = texts.noData || 'Khong co d? li?u';
+
+        detailEl.textContent = texts.noDataDetail || 'Ch?n file ho?c them d? li?u vao YAML';
+
+        detailEl.classList.add('muted');
+
+        counterEl.textContent = '';
+
+        badgeExample.style.visibility = 'hidden';
+
+        badgeSpell.style.visibility = 'hidden';
+
+        return;
+
+      }
+
+
+
+      wordEl.textContent = card.word;
+
+      counterEl.textContent = `${state.index + 1} / ${state.cards.length}`;
+
+      let detailText = '';
+
+      let detailClass = 'detail';
+
+
+
+      const mode = autoMean ? 'mean' : state.showMode;
+
+      if (mode === 'mean') {
+
+        detailText = `${card.spell ? card.spell + ' / ' : ''}${card.mean}`;
+
+      } else if (mode === 'example') {
+
+        detailText = card.example || texts.exampleFallback || 'Khong co vi d?';
+
+      } else {
+
+        detailText = '';
+
+        detailClass += ' muted';
+
+      }
+
+
+
+      detailEl.textContent = detailText;
+
+      detailEl.className = detailClass;
+
+      badgeExample.style.visibility = card.example ? 'visible' : 'hidden';
+
+      badgeSpell.style.visibility = card.spell ? 'visible' : 'hidden';
+
+    }
+
+
+
+    async function persistState() {
+
+      const card = currentCard();
+
+      await fetchJson('/api/state', {
+
+        method: 'POST',
+
+        headers: { 'Content-Type': 'application/json' },
+
+        body: JSON.stringify({
+
+          file: state.currentFile,
+
+          word: card?.word,
+
+          mean: card?.mean,
+
+        }),
+
+      }).catch(() => {});
+
+    }
+
+
+
+    function moveToNext(delta) {
+
+      if (!state.cards.length) return;
+
+      clearAutoTimer();
+
+      state.index = (state.index + delta + state.indices.length) % state.indices.length;
+
+      state.showMode = 'word';
+
+      render();
+
+      persistState();
+
+      startAutoTimer();
+
+    }
+
+
+
+    async function loadFiles() {
+
+      texts = await fetchJson('/api/texts').catch(() => ({}));
+
+      applyTexts();
+
+
+
+      const filesData = await fetchJson('/api/files');
+
+      fileSelect.innerHTML = '';
+
+      filesData.files.forEach((f) => {
+
+        const option = document.createElement('option');
+
+        option.value = f;
+
+        option.textContent = f;
+
+        fileSelect.appendChild(option);
+
+      });
+
+      state.unknownFile = filesData.unknownFile;
+
+      state.unknownCount = filesData.unknownCount || 0;
+
+
+
+      const saved = await fetchJson('/api/state').catch(() => ({}));
+
+      savedPositions = saved.files || {};
+
+      let desiredFile = null;
+
+      const savedFile = saved.lastFile || saved.file;
+
+      if (savedFile && filesData.files.includes(savedFile)) {
+
+        desiredFile = savedFile;
+
+      } else if (filesData.defaultFile && filesData.files.includes(filesData.defaultFile)) {
+
+        desiredFile = filesData.defaultFile;
+
+      } else if (filesData.files.length) {
+
+        desiredFile = filesData.files[0];
+
+      }
+
+
+
+      if (desiredFile) fileSelect.value = desiredFile;
+
+
+
+      if (desiredFile) {
+
+        const savedStateForFile = savedPositions[desiredFile] || (savedFile === desiredFile ? { word: saved.word, mean: saved.mean } : {});
+
+        await loadFile(desiredFile, savedStateForFile);
+
+      } else {
+
+        state.cards = [];
+
+        state.currentFile = '';
+
+        render();
+
+      }
+
+      updateUnknownCountDisplay();
+
+    }
+
+
+
+    async function loadFile(name, savedState = {}) {
+
+      if (!name) return;
+
+      clearAutoTimer();
+
+      const request = ++fileRequest;
+      const data = await fetchJson(`/api/cards?file=${encodeURIComponent(name)}`);
+      if (request !== fileRequest) return;
+
+      state.cards = data.cards;
+
+      state.currentFile = data.file;
+
+      state.unknownFile = data.unknownFile;
+
+      state.unknownCount = data.unknownCount ?? 0;
+
+      buildIndices();
+
+      setIndexFromSaved(savedState);
+
+      render();
+
+      updateUnknownCountDisplay();
+
+      persistState();
+
+      startAutoTimer();
+
+    }
+
+
+
+    async function saveUnknownCard(silent = false) {
+
+      const card = currentCard();
+
+      if (!card) return;
+
+      const data = await fetchJson('/api/save-unknown', {
+
+        method: 'POST',
+
+        headers: { 'Content-Type': 'application/json' },
+
+        body: JSON.stringify({ card, sourceFile: state.currentFile, targetFile: state.unknownFile }),
+
+      });
+
+      if (data.duplicate) {
+
+        showToast(texts.saveDuplicate || 'T? ?a t?n t?i trong danh sach ch?a thu?c');
+
+        return;
+
+      }
+
+            state.unknownFile = data.targetFile || state.unknownFile;
+
+      ensureFileOption(state.unknownFile);
+
+      state.unknownCount = data.count ?? state.unknownCount + 1;
+
+      updateUnknownCountDisplay();
+
+      if (!silent) { showToast(texts.saveSuccess || "?a them vao ch?a thu?c"); }
+
+      await persistState();
+
+    }
+
+
+
+    async function removeUnknownCard(silent = false) {
+
+      const card = currentCard();
+
+      if (!card) return;
+
+      clearAutoTimer();
+
+      const data = await fetchJson('/api/remove-unknown', {
+
+        method: 'POST',
+
+        headers: { 'Content-Type': 'application/json' },
+
+        body: JSON.stringify({ card, sourceFile: state.currentFile, targetFile: state.unknownFile }),
+
+      });
+
+      state.unknownCount = data.count ?? Math.max(0, state.unknownCount - 1);
+
+
+
+      const realIndex = state.indices[state.index];
+
+      if (typeof realIndex === 'number') {
+
+        state.cards.splice(realIndex, 1);
+
+        state.indices = state.indices
+
+          .filter((i) => i !== realIndex)
+
+          .map((i) => (i > realIndex ? i - 1 : i));
+
+        if (state.indices.length === 0) {
+
+          render();
+
+          updateUnknownCountDisplay();
+
+          if (!silent) { showToast(texts.removeSuccess || '?a xoa kh?i ch?a thu?c'); }
+
+          await persistState();
+
+          clearAutoTimer();
+
+          return;
+
+        }
+
+        if (state.index >= state.indices.length) {
+
+          state.index = state.indices.length - 1;
+
+        }
+
+      }
+
+
+      state.showMode = 'word';
+
+      render();
+
+      updateUnknownCountDisplay();
+
+      if (!silent) { showToast(texts.removeSuccess || '?a xoa kh?i ch?a thu?c'); }
+
+      await persistState();
+
+      startAutoTimer();
+
+    }
+
+
+
+    async function copyCurrentWord() {
+
+      const card = currentCard();
+
+      if (!card || !card.word) return;
+
+      const text = card.word;
+
+      try {
+
+        if (navigator.clipboard?.writeText) {
+
+          await navigator.clipboard.writeText(text);
+
+        } else {
+
+          const temp = document.createElement('textarea');
+
+          temp.value = text;
+
+          document.body.appendChild(temp);
+
+          temp.select();
+
+          document.execCommand('copy');
+
+          document.body.removeChild(temp);
+
+        }
+
+        showToast(texts.copied || 'Đã sao chép từ');
+
+      } catch (err) {
+
+        console.error('Copy failed', err);
+
+      }
+
+    }
+
+    function bindInputs() {
+
+      fileSelect.addEventListener('change', (e) => loadFile(e.target.value, savedPositions[e.target.value]).catch(() => {}));
+
+      randomToggle.addEventListener('change', (e) => {
+
+        state.random = e.target.checked;
+
+        buildIndices();
+
+        render();
+
+        persistState();
+
+        startAutoTimer();
+
+      });
+
+      autoToggle.addEventListener('change', (e) => {
+
+        state.autoEnabled = e.target.checked;
+
+        saveAutoPreferences();
+
+        if (state.autoEnabled) startAutoTimer();
+
+        else clearAutoTimer();
+
+      });
+
+      autoDelay.addEventListener('change', () => {
+
+        const value = Number(autoDelay.value);
+
+        if (!Number.isInteger(value) || value < 1 || value > 3600) {
+
+          autoDelay.value = state.autoDelaySeconds;
+
+          showToast(texts.autoDelayInvalid || 'Thoi gian phai tu 1 den 3600 giay');
+
+          return;
+
+        }
+
+        state.autoDelaySeconds = value;
+
+        saveAutoPreferences();
+
+        if (state.autoEnabled) startAutoTimer();
+
+      });
+
+      saveBtn.addEventListener('click', () => {
+
+        if (state.currentFile === state.unknownFile) return;
+
+        saveUnknownCard().catch(() => showToast(texts.loadFailed || 'L?u th?t b?i'));
+
+      });
+
+
+
+      cardBox.addEventListener('click', (e) => {
+
+        const isControl =
+
+          e.target.closest('.controls') ||
+
+          e.target.closest('button') ||
+
+          e.target.closest('select') ||
+
+          e.target.closest('label');
+
+        if (isControl) return;
+
+        copyCurrentWord();
+
+      });
+
+      zoomToggle.addEventListener('click', () => {
+
+        document.body.classList.toggle('zoom-mode');
+        updateDetails(currentCard());
+
+        zoomToggle.textContent = document.body.classList.contains('zoom-mode')
+
+          ? (texts.zoomOff || 'Thu nh?')
+
+          : (texts.zoomOn || 'Phong to');
+
+      });
+
+      nextBtn.addEventListener('click', () => {
+
+        if (state.currentFile === state.unknownFile && canWriteRepository()) {
+
+          removeUnknownCard().catch(() => {
+
+            showToast(texts.loadFailed || 'Xoa th?t b?i');
+
+            startAutoTimer();
+
+          });
+
+        } else {
+
+          moveToNext(1);
+
+        }
+
+      });
+
+      speakBtn.addEventListener('click', speakCurrentWord);
+
+      if ('speechSynthesis' in window) {
+
+        loadVoices();
+
+        if (typeof window.speechSynthesis.addEventListener === 'function') {
+
+          window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+
+        } else {
+
+          window.speechSynthesis.onvoiceschanged = loadVoices;
+
+        }
+
+      } else {
+
+        speakBtn.disabled = true;
+
+        speakBtn.title = texts.speakUnsupported || 'Trinh duyet khong ho tro doc tu';
+
+      }
+
+
+
+      window.addEventListener('keydown', (e) => {
+
+        if (!appReady || e.target.closest('#connectionPanel')) return;
+        const isForm = ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(e.target.tagName);
+
+        if (!isForm && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', ' ', 'r', 'R', 'f', 'F', 's', 'S'].includes(e.key)) {
+
+          e.preventDefault();
+
+        }
+
+        if (isForm) return;
+
+
+
+        if (e.key === 'ArrowLeft') moveToNext(-1);
+
+        if (e.key === 'ArrowRight') moveToNext(1);
+
+        if (e.key === 'ArrowUp') {
+
+          state.showMode = 'mean';
+
+          render();
+
+        }
+
+        if (e.key === 'ArrowDown') {
+
+          state.showMode = 'example';
+
+          render();
+
+        }
+
+        if (e.key === ' ' || e.key === 'Spacebar') {
+
+          zoomToggle.click();
+
+        }
+
+        if (e.key === 'r' || e.key === 'R') {
+
+          randomToggle.checked = !randomToggle.checked;
+
+          state.random = randomToggle.checked;
+
+          buildIndices();
+
+          render();
+
+          persistState();
+
+          startAutoTimer();
+
+        }
+
+        if (e.key === 'f' || e.key === 'F') {
+
+          fileSelect.focus();
+
+        }
+
+        if (e.key === 's' || e.key === 'S') {
+
+          speakCurrentWord();
+
+        }
+
+        if (e.key === 'Enter') {
+
+          if (state.currentFile === state.unknownFile && canWriteRepository()) {
+
+            removeUnknownCard().catch(() => {
+
+              showToast(texts.loadFailed || 'Xoa th?t b?i');
+
+              startAutoTimer();
+
+            });
+
+          } else {
+
+            saveUnknownCard().catch(() => showToast(texts.loadFailed || 'L?u th?t b?i'));
+
+          }
+
+        }
+
+      });
+
+    }
+
+
+
+    async function disconnectRepository() {
+      ++connectionGeneration;
+      ++fileRequest;
+      appReady = false;
+      controls.inert = true;
+      clearAutoTimer();
+      const previous = repositoryClient;
+      repositoryClient = null;
+      ++detailsRequest;
+      detailsKey = null;
+      detailsLabel.hidden = true;
+      markdownDetails.hidden = true;
+      markdownDetails.replaceChildren();
+      state.cards = [];
+      state.indices = [];
+      state.currentFile = '';
+      state.unknownFile = '';
+      state.unknownCount = 0;
+      savedPositions = {};
+      fileSelect.replaceChildren();
+      render();
+      updateUnknownCountDisplay();
+      if (previous) await previous.store.queue;
+    }
+
+    async function connectRepository(client) {
+      await disconnectRepository();
+      repositoryClient = client;
+      if (!client.canWrite) {
+        state.autoEnabled = false;
+        autoToggle.checked = false;
+      }
+      await loadFiles();
+      appReady = true;
+      controls.inert = false;
+      updateUnknownCountDisplay();
+      startAutoTimer();
+    }
+
+    (async function init() {
+      loadAutoPreferences();
+      bindInputs();
+      if (localMode) {
+        document.getElementById('connectionPanel').hidden = true;
+        document.getElementById('connectionStatus').textContent = 'Local (Node.js)';
+        appReady = true;
+        controls.inert = false;
+        await loadFiles();
+      } else {
+        render();
+        await RepositorySettings.init({
+          connect: connectRepository,
+          disconnect: disconnectRepository,
+          pause: clearAutoTimer,
+        });
+      }
+    })().catch(error => {
+      apiError.textContent = RepositorySettings.errorMessage(error);
+      apiError.hidden = false;
+    });
+
+  </script>
+
+</body>
+
+</html>
+
+
+
+
+
+
+
+
