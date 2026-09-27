@@ -34,7 +34,8 @@ class RepositoryStore {
     this.base = (env.REPO_API_URL || (this.provider === 'github' ? 'https://api.github.com' : 'https://gitlab.com/api/v4')).replace(/\/$/, '');
     if (new URL(this.base).protocol !== 'https:') throw new Error('REPO_API_URL must use HTTPS');
     this.root = env.REPO_ROOT ? safePath(env.REPO_ROOT) : '';
-    this.fetcher = fetcher;
+    // Native window.fetch cannot be invoked with RepositoryStore as its receiver.
+    this.fetcher = (...args) => fetcher(...args);
     this.queue = Promise.resolve();
   }
 

@@ -7,7 +7,7 @@
     if (status === 404) return 'Không tìm thấy repository hoặc branch. Kiểm tra cấu hình và quyền đọc của token.';
     if ([400, 409, 422].includes(status)) return 'Không lưu được thay đổi. File có thể đã được sửa ở nơi khác hoặc branch đang được bảo vệ. Hãy tải lại và thử lại.';
     if (status === 429) return 'Đã vượt hạn mức API. Hãy chờ rồi thử lại.';
-    if (error.name === 'TypeError' || error.name === 'TimeoutError') return 'Không kết nối được API. Kiểm tra mạng, API URL và cấu hình CORS nếu dùng máy chủ riêng.';
+    if (error.name === 'TimeoutError' || (error.name === 'TypeError' && /failed to fetch|networkerror|load failed|fetch failed/i.test(error.message))) return 'Không kết nối được API. Kiểm tra mạng, API URL và cấu hình CORS nếu dùng máy chủ riêng.';
     return error.message || 'Không tải được dữ liệu.';
   }
   async function init({ connect, disconnect, pause }) {
