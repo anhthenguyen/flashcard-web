@@ -270,33 +270,70 @@
     });
 
     function practicePoint(event, svg) {
-      return new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+      const point = svg.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      return point.matrixTransform(svg.getScreenCTM().inverse());
     }
 
-    strokeCanvas.addEventListener('pointerdown', event => {
+    function beginPracticeStroke(event, pointerId) {
       const svg = strokeCanvas.querySelector('svg');
-      if (!practiceToggle.checked || !svg || !event.isPrimary || event.button !== 0) return;
-      event.preventDefault();
-      strokeCanvas.setPointerCapture(event.pointerId);
+      if (!practiceToggle.checked || !svg || activePracticeStroke) return false;
       const point = practicePoint(event, svg);
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.classList.add('practice-stroke');
       path.setAttribute('d', `M ${point.x} ${point.y} l 0.01 0.01`);
       svg.appendChild(path);
-      activePracticeStroke = { path, pointerId: event.pointerId };
+      activePracticeStroke = { path, pointerId };
       updatePracticeButtons();
-    });
-    strokeCanvas.addEventListener('pointermove', event => {
-      if (!activePracticeStroke || activePracticeStroke.pointerId !== event.pointerId) return;
+      return true;
+    }
+
+    function movePracticeStroke(event, pointerId) {
+      if (!activePracticeStroke || activePracticeStroke.pointerId !== pointerId) return;
       const { path } = activePracticeStroke;
       const point = practicePoint(event, path.ownerSVGElement);
       path.setAttribute('d', `${path.getAttribute('d')} L ${point.x} ${point.y}`);
+    }
+
+    // Safari also supplies Touch Events. Handle these directly so writing does
+    // not depend on pointer capture or become a page scroll on iPad.
+    const usePracticeTouchEvents = 'ontouchstart' in window;
+    strokeCanvas.addEventListener('pointerdown', event => {
+      if (usePracticeTouchEvents && event.pointerType === 'touch') return;
+      if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return;
+      if (!beginPracticeStroke(event, event.pointerId)) return;
+      event.preventDefault();
+      try { strokeCanvas.setPointerCapture(event.pointerId); } catch (_) { /* Touch fallback remains available. */ }
+    });
+    strokeCanvas.addEventListener('pointermove', event => {
+      movePracticeStroke(event, event.pointerId);
     });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => {
       strokeCanvas.addEventListener(type, event => {
         if (activePracticeStroke?.pointerId === event.pointerId) activePracticeStroke = null;
       });
     });
+    if (usePracticeTouchEvents) {
+      strokeCanvas.addEventListener('touchstart', event => {
+        const touch = event.changedTouches[0];
+        if (touch && beginPracticeStroke(touch, `touch-${touch.identifier}`)) event.preventDefault();
+      }, { passive: false });
+      strokeCanvas.addEventListener('touchmove', event => {
+        if (!activePracticeStroke) return;
+        event.preventDefault();
+        for (const touch of event.changedTouches) movePracticeStroke(touch, `touch-${touch.identifier}`);
+      }, { passive: false });
+      ['touchend', 'touchcancel'].forEach(type => {
+        strokeCanvas.addEventListener(type, event => {
+          for (const touch of event.changedTouches) {
+            if (activePracticeStroke?.pointerId !== `touch-${touch.identifier}`) continue;
+            event.preventDefault();
+            activePracticeStroke = null;
+          }
+        }, { passive: false });
+      });
+    }
 
     function kanjiIn(text) {
       return [...new Set([...String(text || '')].filter((character) => /\p{Script=Han}/u.test(character)))];
