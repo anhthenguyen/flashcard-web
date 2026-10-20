@@ -247,6 +247,15 @@ body.zoom-mode #detailsLabel, body.zoom-mode .markdown-details, body.zoom-mode #
 .kanji-drawing.is-animating .kanji-stroke-number { animation: show-kanji-number 0.01s linear forwards; animation-delay: calc(var(--stroke-index) * 0.42s + 0.38s); }
 .kanji-stroke-number text { stroke: none; font: 700 4.2px "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; paint-order: stroke; }
 .kanji-source { margin: 14px 0 0; color: #596273; font-size: 12px; text-align: center; }
+.stroke-canvas.is-practicing { touch-action: none; user-select: none; cursor: crosshair; }
+.stroke-canvas.is-practicing .kanji-stroke { animation: none; stroke-dashoffset: 0; opacity: 0.2; }
+.stroke-canvas.is-practicing .kanji-stroke-number { animation: none; opacity: 0.6; }
+.stroke-canvas.is-practicing.hide-guide .kanji-stroke,
+.stroke-canvas.is-practicing.hide-guide .kanji-stroke-number { visibility: hidden; }
+.practice-stroke { stroke: #1f2937; stroke-width: 3; }
+.stroke-canvas:not(.is-practicing) .practice-stroke { display: none; }
+#practiceActions { margin-top: 10px; }
+#practiceActions p { color: #596273; font-size: 13px; }
 @keyframes draw-kanji-stroke { to { stroke-dashoffset: 0; } }
 @keyframes show-kanji-number { to { opacity: 1; } }
 

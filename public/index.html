@@ -104,6 +104,13 @@
     <section id="kanjiStrokes" class="kanji-strokes" aria-label="Nét chữ Kanji" hidden>
       <div id="kanjiChoices" class="kanji-choices" aria-label="Chọn Kanji"></div>
       <div class="kanji-stroke-actions"><button id="replayStrokes" type="button">Phát lại</button><span id="strokeStatus" class="stroke-status" aria-live="polite"></span></div>
+      <label class="inline"><input id="practiceToggle" type="checkbox" /> Tập viết</label>
+      <div id="practiceActions" hidden>
+        <label class="inline"><input id="practiceGuide" type="checkbox" checked /> Hiện chữ mẫu</label>
+        <button id="undoPractice" type="button" disabled>Hoàn tác</button>
+        <button id="clearPractice" type="button" disabled>Xóa bài viết</button>
+        <p>Dùng chuột, bút hoặc ngón tay để viết trong ô. Bật chữ mẫu để tô theo thứ tự nét.</p>
+      </div>
       <div id="strokeCanvas" class="stroke-canvas"></div>
       <p class="kanji-source">Dữ liệu nét chữ: <a href="https://kanjivg.tagaini.net/" target="_blank" rel="noopener noreferrer">KanjiVG</a></p>
     </section>
@@ -230,12 +237,73 @@
     let selectedKanji = null;
     let strokesKey = null;
     let strokesRequest = 0;
+    const practiceToggle = document.getElementById('practiceToggle');
+    const practiceGuide = document.getElementById('practiceGuide');
+    const practiceActions = document.getElementById('practiceActions');
+    const undoPractice = document.getElementById('undoPractice');
+    const clearPractice = document.getElementById('clearPractice');
+    let activePracticeStroke = null;
+
+    function updatePracticeButtons() {
+      const empty = !strokeCanvas.querySelector('.practice-stroke');
+      undoPractice.disabled = clearPractice.disabled = empty;
+    }
+
+    function updatePracticeMode() {
+      activePracticeStroke = null;
+      strokeCanvas.classList.toggle('is-practicing', practiceToggle.checked);
+      strokeCanvas.classList.toggle('hide-guide', !practiceGuide.checked);
+      practiceActions.hidden = !practiceToggle.checked;
+      replayStrokes.disabled = practiceToggle.checked;
+      updatePracticeButtons();
+    }
+
+    practiceToggle.addEventListener('change', updatePracticeMode);
+    practiceGuide.addEventListener('change', updatePracticeMode);
+    undoPractice.addEventListener('click', () => {
+      strokeCanvas.querySelector('.practice-stroke:last-child')?.remove();
+      updatePracticeButtons();
+    });
+    clearPractice.addEventListener('click', () => {
+      strokeCanvas.querySelectorAll('.practice-stroke').forEach(path => path.remove());
+      updatePracticeButtons();
+    });
+
+    function practicePoint(event, svg) {
+      return new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+    }
+
+    strokeCanvas.addEventListener('pointerdown', event => {
+      const svg = strokeCanvas.querySelector('svg');
+      if (!practiceToggle.checked || !svg || !event.isPrimary || event.button !== 0) return;
+      event.preventDefault();
+      strokeCanvas.setPointerCapture(event.pointerId);
+      const point = practicePoint(event, svg);
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.classList.add('practice-stroke');
+      path.setAttribute('d', `M ${point.x} ${point.y} l 0.01 0.01`);
+      svg.appendChild(path);
+      activePracticeStroke = { path, pointerId: event.pointerId };
+      updatePracticeButtons();
+    });
+    strokeCanvas.addEventListener('pointermove', event => {
+      if (!activePracticeStroke || activePracticeStroke.pointerId !== event.pointerId) return;
+      const { path } = activePracticeStroke;
+      const point = practicePoint(event, path.ownerSVGElement);
+      path.setAttribute('d', `${path.getAttribute('d')} L ${point.x} ${point.y}`);
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => {
+      strokeCanvas.addEventListener(type, event => {
+        if (activePracticeStroke?.pointerId === event.pointerId) activePracticeStroke = null;
+      });
+    });
 
     function kanjiIn(text) {
       return [...new Set([...String(text || '')].filter((character) => /\p{Script=Han}/u.test(character)))];
     }
 
     function resetStrokes() {
+      activePracticeStroke = null;
       ++strokesRequest;
       currentKanji = [];
       selectedKanji = null;
@@ -244,6 +312,7 @@
       kanjiChoices.replaceChildren();
       strokeCanvas.replaceChildren();
       strokeStatus.textContent = '';
+      updatePracticeButtons();
     }
 
     async function loadKanjiSvg(character) {
@@ -259,6 +328,7 @@
     }
 
     function replayKanji() {
+      if (practiceToggle.checked) return;
       const drawing = strokeCanvas.querySelector('.kanji-drawing');
       if (!drawing) return;
       const replay = drawing.cloneNode(true);
@@ -311,6 +381,7 @@
       });
       requestAnimationFrame(() => svg.classList.add('is-animating'));
       strokeStatus.textContent = `${character} · ${strokes.length} nét`;
+      updatePracticeMode();
     }
 
     async function selectKanji(character) {
@@ -318,6 +389,8 @@
       selectedKanji = character;
       kanjiChoices.querySelectorAll('button').forEach((button) => button.classList.toggle('selected', button.dataset.kanji === character));
       strokeCanvas.replaceChildren();
+      activePracticeStroke = null;
+      updatePracticeButtons();
       strokeStatus.textContent = `Đang tải ${character}…`;
       const request = ++strokesRequest;
       try {
